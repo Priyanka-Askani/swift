@@ -122,6 +122,7 @@ class RingBuilder(object):
         # done because of device failure.
         self._last_part_moves = array('B', itertools.repeat(0, self.parts))
         # _part_moved_bitmap record parts have been moved
+        print("----_last_part_moves-----",_last_part_moves)
         self._part_moved_bitmap = None
         # _last_part_moves_epoch indicates the time the offsets in
         # _last_part_moves is based on.
