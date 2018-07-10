@@ -2362,6 +2362,7 @@ def hash_path(account, container=None, object=None, raw_digest=False):
         raise ValueError('container is required if object is provided')
     paths = [account if isinstance(account, six.binary_type)
              else account.encode('utf8')]
+    #print("-----PATH IN hash_path------",paths)
     if container:
         paths.append(container if isinstance(container, six.binary_type)
                      else container.encode('utf8'))
