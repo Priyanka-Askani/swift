@@ -36,33 +36,35 @@ from swift.common.ring.utils import tiers_for_dev
 
 
 def calc_replica_count(replica2part2dev_id):
-    base = len(replica2part2dev_id) - 1
-    extra = 1.0 * len(replica2part2dev_id[-1]) / len(replica2part2dev_id[0])
+    base = len(replica2part2dev_id) - 1     #its 3
+    extra = 1.0 * len(replica2part2dev_id[-1]) / len(replica2part2dev_id[0])            #to check if any partial replicas
     return base + extra
 
 
 class RingData(object):
-    """Partitioned consistent hashing ring data (used for serialization)."""
+    """Partitioned consistent hashing ring data (used for serialization(its gz file))."""
 
     def __init__(self, replica2part2dev_id, devs, part_shift,
                  next_part_power=None):
-        self.devs = devs
-        self._replica2part2dev_id = replica2part2dev_id
+        self.devs = devs                   #dict of all the devices. 
+        self._replica2part2dev_id = replica2part2dev_id #2d array
         self._part_shift = part_shift
         self.next_part_power = next_part_power
 
         for dev in self.devs:
             if dev is not None:
-                dev.setdefault("region", 1)
+                dev.setdefault("region", 1)         #by default all the devices are regoin 1
 
     @property
     def replica_count(self):
         """Number of replicas (full or partial) used in the ring."""
-        return calc_replica_count(self._replica2part2dev_id)
+        return calc_replica_count(self._replica2part2dev_id)        #return num of replicas
 
     @classmethod
     def deserialize_v1(cls, gz_file, metadata_only=False):
         """
+        extract device dictionary from gzfile 
+
         Deserialize a v1 ring file into a dictionary with `devs`, `part_shift`,
         and `replica2part2dev_id` keys.
 
@@ -84,14 +86,21 @@ class RingData(object):
         if metadata_only:
             return ring_dict
 
-        byteswap = (ring_dict.get('byteorder', sys.byteorder) != sys.byteorder)
+        byteswap = (ring_dict.get('byteorder', sys.byteorder) != sys.byteorder)  #byteorder tells if its little or big endian and byteswap changes byteorder.
+        print("----byteswap----------",byteswap)
+        print("---byteorder-----------",sys.byteorder)
 
-        partition_count = 1 << (32 - ring_dict['part_shift'])
+        partition_count = 1 << (32 - ring_dict['part_shift'])     #1<<10=1024
+        print("------------Partition count-----------",partition_count)       
+        #print(ring_dict)
+        #print(ring_dict['replica_count'])
         for x in range(ring_dict['replica_count']):
-            part2dev = array.array('H', gz_file.read(2 * partition_count))
-            if byteswap:
+            part2dev = array.array('H', gz_file.read(2 * partition_count))          
+            #print("----------part2dev---------------",part2dev)            #array(H):converts string  read from file to interger value and return list of integers. 
+                                                                                                                                                    
+            if byteswap:                            #its false so it doesnt execute if.
                 part2dev.byteswap()
-            ring_dict['replica2part2dev_id'].append(part2dev)
+            ring_dict['replica2part2dev_id'].append(part2dev)       #values for 2d array are put into 1d array here
 
         return ring_dict
 
@@ -108,8 +117,10 @@ class RingData(object):
 
         # See if the file is in the new format
         magic = gz_file.read(4)
+        print("----magic---",magic)
         if magic == b'R1NG':
             format_version, = struct.unpack('!H', gz_file.read(2))
+            print("-----format_version----",format_version)
             if format_version == 1:
                 ring_data = cls.deserialize_v1(
                     gz_file, metadata_only=metadata_only)
@@ -197,6 +208,7 @@ class Ring(object):
         if ring_name:
             self.serialized_path = os.path.join(serialized_path,
                                                 ring_name + '.ring.gz')
+            print("------serialized path-----------",self.serialized_path)
         else:
             self.serialized_path = os.path.join(serialized_path)
         self.reload_time = reload_time
@@ -204,9 +216,10 @@ class Ring(object):
         self._reload(force=True)
 
     def _reload(self, force=False):
-        self._rtime = time() + self.reload_time
+        self._rtime = time() + self.reload_time     #every 15sec validation is happening.
         if force or self.has_changed():
-            ring_data = RingData.load(self.serialized_path)
+            ring_data = RingData.load(self.serialized_path)     #if data has changed then ring data is loaded again from the path.
+            #print("--------Ring data-------",ring_data.__dict__)        #ring data is dict of list of all the four devs(sdb1,sdb2,sdb3,sdb4) has details about devs,like in whih region,zone,dev name etc.
 
             try:
                 self._validation_hook(ring_data)
@@ -248,8 +261,13 @@ class Ring(object):
             # bailouts in get_more_nodes() working.
             dev_ids_with_parts = set()
             for part2dev_id in self._replica2part2dev_id:
+                #print("-----------part2dev_id",part2dev_id)
                 for dev_id in part2dev_id:
+                    #print("dev_id------------",dev_id)
                     dev_ids_with_parts.add(dev_id)
+
+            
+            #print((dev_ids_with_parts))   #set which has device id which has atleast 1 partition.
 
             regions = set()
             zones = set()
@@ -281,14 +299,17 @@ class Ring(object):
                 continue
             for tier in tiers_for_dev(dev):
                 self.tier2devs[tier].append(dev)
-
+        #print("--------tier2dev-----",self.tier2devs)
         tiers_by_length = defaultdict(list)
         for tier in self.tier2devs:
             tiers_by_length[len(tier)].append(tier)
         self.tiers_by_length = sorted(tiers_by_length.values(),
                                       key=lambda x: len(x[0]))
+
         for tiers in self.tiers_by_length:
             tiers.sort()
+        
+        #print("--------tiers-----------",tiers)
 
     @property
     def replica_count(self):
@@ -319,12 +340,16 @@ class Ring(object):
     def _get_part_nodes(self, part):
         part_nodes = []
         seen_ids = set()
+        
         for r2p2d in self._replica2part2dev_id:
-            if part < len(r2p2d):
+            if part < len(r2p2d):   #partition num should be less that the row length.
                 dev_id = r2p2d[part]
                 if dev_id not in seen_ids:
+                    #print("------dev[dev_id]-------",self.devs[dev_id])
                     part_nodes.append(self.devs[dev_id])
                     seen_ids.add(dev_id)
+        print("----part nodes----",part_nodes)
+        print("------seen_ids----",seen_ids)
         return [dict(node, index=i) for i, node in enumerate(part_nodes)]
 
     def get_part(self, account, container=None, obj=None):
@@ -337,9 +362,11 @@ class Ring(object):
         :returns: the partition number
         """
         key = hash_path(account, container, obj, raw_digest=True)
+        print("---KEY----",key)
         if time() > self._rtime:
             self._reload()
         part = struct.unpack_from('>I', key)[0] >> self._part_shift
+        print("----PART---",part)
         return part
 
     def get_part_nodes(self, part):
@@ -388,6 +415,9 @@ class Ring(object):
         ======  ===============================================================
         """
         part = self.get_part(account, container, obj)
+        #added
+        #partitionnodes=_get_part_nodes(part)
+        #print("---part_nodes---",partitionnodes)
         return part, self._get_part_nodes(part)
 
     def get_more_nodes(self, part):
